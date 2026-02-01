@@ -637,18 +637,23 @@ function TalleresCards({ onEdit, onViewPdf }) {
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
-                  onClick={() => onViewPdf(t)}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 14,
-                    border: `1px solid ${COLORS.line}`,
-                    background: "#fff",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                  }}
-                >
-                  Ver PDF
-                </button>
+  onClick={() => onViewPdf(t)}
+  style={{
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: "1px solid transparent",
+    background: COLORS.blue,      // 🔵 azul visible
+    color: "#fff",               // texto blanco
+    fontWeight: 900,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  }}
+>
+  📄 Ver PDF
+</button>
+
 
                 <button
                   onClick={() => onEdit(t)}
