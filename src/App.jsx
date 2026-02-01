@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import jsPDF from "jspdf";
+import { jsPDF } from "jspdf";
 
 const STORAGE_KEY = "la_maxima_propuesta_2026";
 
