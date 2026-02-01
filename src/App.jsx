@@ -1,7 +1,21 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { jsPDF } from "jspdf";
+import jsPDF from "jspdf";
 
-const STORAGE_KEY = "la_maxima_propuesta_2026";
+// Firebase (Firestore)
+import { db } from "./lib/firebase";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
+
+const STORAGE_KEY = "la_maxima_propuesta_2026_local";
 
 // Paleta inspirada en el dossier La Máxima
 const COLORS = {
@@ -79,6 +93,37 @@ function safe(v) {
   return (v ?? "").toString().trim();
 }
 
+// ------------------------
+// Firestore helpers
+// ------------------------
+async function createTallerFS(data) {
+  const payload = {
+    ...data,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  const ref = await addDoc(collection(db, "talleres"), payload);
+  return ref.id;
+}
+
+async function updateTallerFS(id, data) {
+  const ref = doc(db, "talleres", id);
+  await updateDoc(ref, { ...data, updatedAt: serverTimestamp() });
+}
+
+async function deleteTallerFS(id) {
+  await deleteDoc(doc(db, "talleres", id));
+}
+
+async function listTalleresFS() {
+  const q = query(collection(db, "talleres"), orderBy("createdAt", "desc"));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// ------------------------
+// PDF
+// ------------------------
 function buildPdfText(data) {
   const publico = [];
   if (data.publico.infantes) publico.push("Infantes");
@@ -190,6 +235,9 @@ function exportPDF(data) {
   doc.save(`Propuesta_LaMaxima_${safe(data.nombre) || "actividad"}_${data.anio}.pdf`);
 }
 
+// ------------------------
+// UI helpers
+// ------------------------
 function Dot({ active, done }) {
   return (
     <span
@@ -204,7 +252,7 @@ function Dot({ active, done }) {
   );
 }
 
-// ✅ IMPORTANTE: renderers fuera del componente App (para no perder foco)
+// ✅ Renderers fuera de App para NO perder foco
 function renderPublico(data, setData) {
   const p = data.publico;
   const set = (patch) => setData((d) => ({ ...d, ...patch }));
@@ -492,10 +540,170 @@ function renderStepContent(stepKey, data, setData) {
   }
 }
 
+// ------------------------
+// Cards view (inline) – no necesita archivo extra
+// ------------------------
+function TalleresView({ theme, onOpen }) {
+  const [items, setItems] = useState([]);
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const list = await listTalleresFS();
+      setItems(list);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return items;
+    return items.filter((t) => {
+      const nombre = (t.nombre || "").toLowerCase();
+      const resp = (t.responsables || "").toLowerCase();
+      const ejes = (t.ejes || "").toLowerCase();
+      return nombre.includes(s) || resp.includes(s) || ejes.includes(s);
+    });
+  }, [items, q]);
+
+  const fmt = (v) => (v ? v : "—");
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar por nombre, responsable o ejes…"
+          style={{
+            flex: "1 1 260px",
+            padding: "12px 14px",
+            borderRadius: 14,
+            border: `1px solid ${theme.line}`,
+            fontSize: 16,
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={refresh}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 14,
+            border: `1px solid ${theme.line}`,
+            background: "#fff",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Actualizar
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ opacity: 0.75, fontWeight: 800 }}>Cargando talleres…</div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: 12,
+          }}
+        >
+          {filtered.map((t) => (
+            <div
+              key={t.id}
+              style={{
+                borderRadius: 18,
+                border: `1px solid ${theme.line}`,
+                background: "#fff",
+                padding: 14,
+                boxShadow: "0 10px 30px rgba(17,17,17,0.06)",
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <div style={{ fontWeight: 950, fontSize: 16 }}>
+                {t.nombre || "Sin nombre"}
+              </div>
+
+              <div style={{ opacity: 0.78, fontSize: 13 }}>
+                ⏱️ {fmt(t.operativa?.duracion)} · 👥 {fmt(t.operativa?.cupo)}
+              </div>
+
+              <div style={{ opacity: 0.78, fontSize: 13 }}>
+                🤝 {fmt(t.responsables)}
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+                <button
+                  onClick={() => onOpen?.(t)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 14,
+                    border: "1px solid transparent",
+                    background: theme.green,
+                    color: "#fff",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Abrir
+                </button>
+
+                <button
+                  onClick={async () => {
+                    const ok = confirm("¿Eliminar este taller? No se puede deshacer.");
+                    if (!ok) return;
+                    await deleteTallerFS(t.id);
+                    await refresh();
+                  }}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 14,
+                    border: `1px solid ${theme.line}`,
+                    background: "#fff",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading && !filtered.length && (
+        <div style={{ opacity: 0.7, fontWeight: 800 }}>
+          No hay talleres guardados todavía.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(initial);
 
+  // vista
+  const [view, setView] = useState("form"); // "form" | "list"
+
+  // firestore id del documento actual
+  const [currentId, setCurrentId] = useState(null);
+
+  // estados UI
+  const [saving, setSaving] = useState(false);
+
+  // cargar local (solo para no perder datos en refresh)
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -513,6 +721,13 @@ export default function App() {
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const back = () => setStep((s) => Math.max(s - 1, 0));
   const dots = useMemo(() => STEPS.map((_, i) => ({ active: i === step, done: i < step })), [step]);
+
+  const resetNuevo = () => {
+    setData(initial);
+    setCurrentId(null);
+    setStep(0);
+    setView("form");
+  };
 
   const styles = `
     :root{
@@ -556,6 +771,7 @@ export default function App() {
     .btnPrimary{background:var(--ink);color:var(--white)}
     .btnSecondary{background:transparent;border-color:var(--line);color:var(--ink)}
     .btnGreen{background:var(--green);color:var(--white)}
+    .btnDanger{background:#fff;border-color:rgba(230,0,0,0.25);color:#b30000}
     .btn:disabled{opacity:0.55;cursor:not-allowed}
     .dots{padding:0 18px 10px;display:flex;gap:8px;flex-wrap:wrap}
     .content{padding:8px 18px 18px;}
@@ -574,11 +790,18 @@ export default function App() {
     }
     .chip input{width:18px;height:18px}
     .nav{padding:0 18px 18px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-    .footerIcons{display:flex;justify-content:center;gap:16px;padding:10px 16px 20px;opacity:0.9;}
-    .pill{
-      width:46px;height:46px;border-radius:18px;display:flex;align-items:center;justify-content:center;
-      border:1px solid rgba(17,17,17,0.10);background:#fff;box-shadow:0 10px 30px rgba(17,17,17,0.06);
-      font-size:20px;
+    .infoBar{
+      padding:0 18px 10px;
+      display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+      color:rgba(17,17,17,0.70);
+      font-weight:850;
+      font-size:13px;
+    }
+    .tag{
+      border:1px solid var(--line);
+      border-radius:999px;
+      padding:6px 10px;
+      background:rgba(31,163,91,0.06);
     }
     @media (max-width: 760px){
       .brand h1{font-size:22px}
@@ -587,6 +810,8 @@ export default function App() {
       input,textarea{font-size:17px}
     }
   `;
+
+  const canSave = safe(data.nombre).length > 0;
 
   return (
     <div className="wrap">
@@ -611,62 +836,121 @@ export default function App() {
               <div className="iconBubble">{current.icon}</div>
               <div>
                 <div className="stepMeta">
-                  Paso {step + 1} de {STEPS.length}
+                  {view === "form" ? (
+                    <>Paso {step + 1} de {STEPS.length}</>
+                  ) : (
+                    <>Talleres guardados</>
+                  )}
                 </div>
-                <h2>{current.label}</h2>
+                <h2>{view === "form" ? current.label : "Listado de talleres"}</h2>
               </div>
             </div>
 
             <div className="actions">
-              <button className="btn btnGreen" onClick={() => exportPDF(data)} title="Exportar PDF">
+              <button className="btn btnSecondary" onClick={() => setView("form")}>
+                Formulario
+              </button>
+
+              <button className="btn btnSecondary" onClick={() => setView("list")}>
+                Talleres
+              </button>
+
+              <button
+                className="btn btnSecondary"
+                onClick={resetNuevo}
+                title="Crear un taller nuevo (limpia el formulario)"
+              >
+                Nuevo
+              </button>
+
+              <button
+                className="btn btnGreen"
+                disabled={saving || !canSave}
+                onClick={async () => {
+                  if (!canSave) {
+                    alert("Completá al menos el nombre del taller.");
+                    return;
+                  }
+                  setSaving(true);
+                  try {
+                    if (currentId) {
+                      await updateTallerFS(currentId, data);
+                      alert("Taller actualizado ✅");
+                    } else {
+                      const id = await createTallerFS(data);
+                      setCurrentId(id);
+                      alert("Taller guardado ✅");
+                    }
+                  } catch (e) {
+                    console.error(e);
+                    alert("Error al guardar. Mirá la consola.");
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                title="Guardar en Firestore"
+              >
+                {saving ? "Guardando…" : currentId ? "Guardar cambios" : "Guardar taller"}
+              </button>
+
+              <button className="btn btnGreen" onClick={() => exportPDF(data)}>
                 Exportar PDF
               </button>
             </div>
           </div>
 
-          <div className="dots">
-            {dots.map((d, idx) => (
-              <Dot key={idx} active={d.active} done={d.done} />
-            ))}
+          <div className="infoBar">
+            <span className="tag">
+              {currentId ? `ID: ${currentId}` : "Sin guardar en la base"}
+            </span>
+            {!canSave && <span className="tag">Falta: nombre del taller</span>}
           </div>
 
-          <div className="content">
-            {renderStepContent(current.key, data, setData)}
-          </div>
+          {view === "form" ? (
+            <>
+              <div className="dots">
+                {dots.map((d, idx) => (
+                  <Dot key={idx} active={d.active} done={d.done} />
+                ))}
+              </div>
 
-          <div className="nav">
-            <button className="btn btnSecondary" onClick={back} disabled={step === 0}>
-              Atrás
-            </button>
+              <div className="content">
+                {renderStepContent(current.key, data, setData)}
+              </div>
 
-            {step < STEPS.length - 1 ? (
-              <button className="btn btnPrimary" onClick={next}>
-                Siguiente
-              </button>
-            ) : (
-              <button className="btn btnPrimary" onClick={() => exportPDF(data)}>
-                Finalizar y exportar
-              </button>
-            )}
-          </div>
+              <div className="nav">
+                <button className="btn btnSecondary" onClick={back} disabled={step === 0}>
+                  Atrás
+                </button>
+
+                {step < STEPS.length - 1 ? (
+                  <button className="btn btnPrimary" onClick={next}>
+                    Siguiente
+                  </button>
+                ) : (
+                  <button className="btn btnPrimary" onClick={() => exportPDF(data)}>
+                    Finalizar y exportar
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="content">
+              <TalleresView
+                theme={{ line: COLORS.line, green: COLORS.green }}
+                onOpen={(t) => {
+                  // IMPORTANT: Firestore doc viene con id; lo guardamos aparte
+                  const { id, createdAt, updatedAt, ...rest } = t;
+                  setData((d) => ({ ...d, ...rest }));
+                  setCurrentId(id);
+                  setView("form");
+                  setStep(0);
+                }}
+              />
+            </div>
+          )}
         </section>
       </main>
-
-      {/* ICONOS DECORATIVOS (sutil, estilo dossier) */}
-      <div className="footerIcons" aria-hidden="true">
-        <div className="pill" style={{ borderColor: "rgba(31,163,91,0.25)", background: "rgba(31,163,91,0.10)" }}>
-          🌿
-        </div>
-        <div className="pill" style={{ borderColor: "rgba(31,122,224,0.25)", background: "rgba(31,122,224,0.10)" }}>
-          💧
-        </div>
-        <div className="pill" style={{ borderColor: "rgba(230,90,166,0.25)", background: "rgba(230,90,166,0.10)" }}>
-          🌸
-        </div>
-        <div className="pill" style={{ borderColor: "rgba(200,162,0,0.25)", background: "rgba(200,162,0,0.10)" }}>
-          ☀️
-        </div>
-      </div>
     </div>
   );
 }
