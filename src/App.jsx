@@ -92,6 +92,9 @@ const initial = {
   integracion: "",
   observaciones: "",
 };
+function isMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
 
 function safe(v) {
   return (v ?? "").toString().trim();
