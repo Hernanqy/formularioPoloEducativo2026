@@ -785,13 +785,20 @@ export default function App() {
     next();
   };
 
-  const openPdfPreview = (payload, nombre) => {
-    setPdfUrl("");
-    const url = pdfBlobUrl(payload);
-    setPdfTitle(nombre ? `PDF — ${nombre}` : "PDF — Taller");
-    setPdfUrl(url);
-    setPdfOpen(true);
-  };
+const openPdfPreview = (payload, nombre) => {
+  const url = pdfBlobUrl(payload);
+
+  // 📱 En celular → abrir visor nativo
+  if (isMobile()) {
+    window.open(url, "_blank");
+    return;
+  }
+
+  // 🖥️ En desktop → modal con iframe
+  setPdfTitle(nombre ? `PDF — ${nombre}` : "PDF — Taller");
+  setPdfUrl(url);
+  setPdfOpen(true);
+};
 
   const styles = `
     :root{--bg:${COLORS.bg};--ink:${COLORS.ink};--green:${COLORS.green};--blue:${COLORS.blue};--line:${COLORS.line};--white:${COLORS.white}}
