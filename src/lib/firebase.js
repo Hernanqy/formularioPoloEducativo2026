@@ -1,16 +1,18 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "....",
-  authDomain: "....",
-  projectId: "....",          // ✅ OBLIGATORIO
-  storageBucket: "....",
-  messagingSenderId: "....",
-  appId: "....",
+  // 🔽 pegá acá tu config completa de Firebase
+  // apiKey: "...",
+  // authDomain: "...",
+  // projectId: "...",
+  // storageBucket: "...",
+  // messagingSenderId: "...",
+  // appId: "..."
 };
 
 const app = initializeApp(firebaseConfig);
-
-// ✅ esto es lo que tu App.jsx está intentando importar:
 export const db = getFirestore(app);
+
+// ✅ Cache offline (si falla, no rompe)
+enableIndexedDbPersistence(db).catch(() => {});

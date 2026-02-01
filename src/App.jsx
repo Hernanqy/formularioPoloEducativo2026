@@ -1,30 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 
-// Firebase (Firestore)
+// Firestore
 import { db } from "./lib/firebase";
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
-  getDocs,
+  limit,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
 
-const STORAGE_KEY = "la_maxima_propuesta_2026_local";
-
-// Paleta inspirada en el dossier La Máxima
 const COLORS = {
-  bg: "#E8E1D0", // beige
-  ink: "#111111", // negro
-  green: "#1FA35B", // verde marca
+  bg: "#E8E1D0",
+  ink: "#111111",
+  green: "#1FA35B",
   blue: "#1F7AE0",
-  pink: "#E65AA6",
-  mustard: "#C8A200",
   line: "rgba(17,17,17,0.12)",
   white: "#FFFFFF",
 };
@@ -93,38 +89,35 @@ function safe(v) {
   return (v ?? "").toString().trim();
 }
 
-// ------------------------
-// Firestore helpers
-// ------------------------
+// -----------------------------
+// Firestore CRUD
+// -----------------------------
 async function createTallerFS(data) {
-  const payload = {
-    ...data,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
+  const payload = { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
   const ref = await addDoc(collection(db, "talleres"), payload);
   return ref.id;
 }
 
 async function updateTallerFS(id, data) {
-  const ref = doc(db, "talleres", id);
-  await updateDoc(ref, { ...data, updatedAt: serverTimestamp() });
+  await updateDoc(doc(db, "talleres", id), { ...data, updatedAt: serverTimestamp() });
 }
 
 async function deleteTallerFS(id) {
   await deleteDoc(doc(db, "talleres", id));
 }
 
-async function listTalleresFS() {
-  const q = query(collection(db, "talleres"), orderBy("createdAt", "desc"));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+// ✅ Realtime subscribe (rápido) + limit
+function subscribeTalleresFS(setItems) {
+  const q = query(collection(db, "talleres"), orderBy("createdAt", "desc"), limit(100));
+  return onSnapshot(q, (snap) => {
+    setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  });
 }
 
-// ------------------------
-// PDF
-// ------------------------
-function buildPdfText(data) {
+// -----------------------------
+// PDF helpers
+// -----------------------------
+function buildPdfItems(data) {
   const publico = [];
   if (data.publico.infantes) publico.push("Infantes");
   if (data.publico.ninos) publico.push("Niños/as");
@@ -170,74 +163,83 @@ function buildPdfText(data) {
   ].filter((x) => safe(x.v));
 }
 
-function exportPDF(data) {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const W = doc.internal.pageSize.getWidth();
-  const H = doc.internal.pageSize.getHeight();
+function buildPdfDoc(data) {
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const W = pdf.internal.pageSize.getWidth();
+  const H = pdf.internal.pageSize.getHeight();
 
-  // Fondo beige
-  doc.setFillColor(232, 225, 208);
-  doc.rect(0, 0, W, H, "F");
+  // Fondo
+  pdf.setFillColor(232, 225, 208);
+  pdf.rect(0, 0, W, H, "F");
 
-  // Encabezado verde
-  doc.setFillColor(31, 163, 91);
-  doc.roundedRect(40, 36, W - 80, 78, 14, 14, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.text("LA MÁXIMA", 60, 68);
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "normal");
-  doc.text("Polo Educativo y Recreativo", 60, 88);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text(`Propuesta de Actividades ${data.anio}`, 60, 108);
+  // Header
+  pdf.setFillColor(31, 163, 91);
+  pdf.roundedRect(40, 36, W - 80, 78, 14, 14, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(18);
+  pdf.text("LA MÁXIMA", 60, 68);
+  pdf.setFontSize(11);
+  pdf.setFont("helvetica", "normal");
+  pdf.text("Polo Educativo y Recreativo", 60, 88);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(14);
+  pdf.text(`Propuesta de Actividades ${data.anio}`, 60, 108);
 
-  // Caja blanca
+  // Caja
   let y = 135;
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(40, y, W - 80, H - y - 60, 16, 16, "F");
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(40, y, W - 80, H - y - 60, 16, 16, "F");
 
-  // Contenido
-  const items = buildPdfText(data);
+  const items = buildPdfItems(data);
   let cy = y + 28;
   const left = 60;
   const maxW = W - 120;
 
-  doc.setTextColor(17, 17, 17);
+  pdf.setTextColor(17, 17, 17);
 
   const newPageBox = () => {
-    doc.addPage();
-    doc.setFillColor(232, 225, 208);
-    doc.rect(0, 0, W, H, "F");
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(40, 40, W - 80, H - 100, 16, 16, "F");
+    pdf.addPage();
+    pdf.setFillColor(232, 225, 208);
+    pdf.rect(0, 0, W, H, "F");
+    pdf.setFillColor(255, 255, 255);
+    pdf.roundedRect(40, 40, W - 80, H - 100, 16, 16, "F");
     cy = 70;
   };
 
   const writeBlock = (title, value) => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11.5);
-    doc.text(title, left, cy);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11.5);
+    pdf.text(title, left, cy);
     cy += 14;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10.5);
-    const lines = doc.splitTextToSize(value, maxW);
-    doc.text(lines, left, cy);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10.5);
+    const lines = pdf.splitTextToSize(value, maxW);
+    pdf.text(lines, left, cy);
     cy += lines.length * 12 + 12;
 
     if (cy > H - 80) newPageBox();
   };
 
   items.forEach((it) => writeBlock(it.t, it.v));
-
-  doc.save(`Propuesta_LaMaxima_${safe(data.nombre) || "actividad"}_${data.anio}.pdf`);
+  return pdf;
 }
 
-// ------------------------
+function downloadPdf(data) {
+  const pdf = buildPdfDoc(data);
+  pdf.save(`Propuesta_LaMaxima_${safe(data.nombre) || "actividad"}_${data.anio}.pdf`);
+}
+
+function pdfBlobUrl(data) {
+  const pdf = buildPdfDoc(data);
+  // jsPDF devuelve un blob URL listo para iframe
+  return pdf.output("bloburl");
+}
+
+// -----------------------------
 // UI helpers
-// ------------------------
+// -----------------------------
 function Dot({ active, done }) {
   return (
     <span
@@ -252,7 +254,7 @@ function Dot({ active, done }) {
   );
 }
 
-// ✅ Renderers fuera de App para NO perder foco
+// Renderers fuera de App para no perder foco
 function renderPublico(data, setData) {
   const p = data.publico;
   const set = (patch) => setData((d) => ({ ...d, ...patch }));
@@ -367,7 +369,7 @@ function renderStepContent(stepKey, data, setData) {
         <>
           <label>Nombre del taller / actividad</label>
           <input
-            placeholder="Ej.: Taller de Naturaleza"
+            placeholder="Ej.: Antropología viva"
             value={data.nombre}
             onChange={(e) => set({ nombre: e.target.value })}
           />
@@ -452,21 +454,18 @@ function renderStepContent(stepKey, data, setData) {
         <>
           <label>Momento 1 – Inicio</label>
           <textarea
-            placeholder="Recepción, presentación, disparador…"
             value={data.secuencia.inicio}
             onChange={(e) => set({ secuencia: { ...data.secuencia, inicio: e.target.value } })}
             style={{ minHeight: 120 }}
           />
           <label>Momento 2 – Desarrollo</label>
           <textarea
-            placeholder="Actividades centrales, metodología…"
             value={data.secuencia.desarrollo}
             onChange={(e) => set({ secuencia: { ...data.secuencia, desarrollo: e.target.value } })}
             style={{ minHeight: 140 }}
           />
           <label>Momento 3 – Cierre</label>
           <textarea
-            placeholder="Síntesis, evaluación, devolución…"
             value={data.secuencia.cierre}
             onChange={(e) => set({ secuencia: { ...data.secuencia, cierre: e.target.value } })}
             style={{ minHeight: 120 }}
@@ -478,11 +477,7 @@ function renderStepContent(stepKey, data, setData) {
       return (
         <>
           <label>Insumos necesarios</label>
-          <textarea
-            placeholder="Materiales didácticos, tecnológicos, artísticos…"
-            value={data.insumos}
-            onChange={(e) => set({ insumos: e.target.value })}
-          />
+          <textarea value={data.insumos} onChange={(e) => set({ insumos: e.target.value })} />
         </>
       );
 
@@ -490,11 +485,7 @@ function renderStepContent(stepKey, data, setData) {
       return (
         <>
           <label>Logística necesaria</label>
-          <textarea
-            placeholder="Espacios, mobiliario, horarios, apoyos…"
-            value={data.logistica}
-            onChange={(e) => set({ logistica: e.target.value })}
-          />
+          <textarea value={data.logistica} onChange={(e) => set({ logistica: e.target.value })} />
         </>
       );
 
@@ -505,20 +496,15 @@ function renderStepContent(stepKey, data, setData) {
       return (
         <>
           <label>¿Qué espacios del Polo participan?</label>
-          <textarea
-            placeholder="Ej.: BioParque, Museo de las Ciencias, CiT…"
-            value={data.espacios}
-            onChange={(e) => set({ espacios: e.target.value })}
-          />
+          <textarea value={data.espacios} onChange={(e) => set({ espacios: e.target.value })} />
         </>
       );
 
     case "integracion":
       return (
         <>
-          <label>¿Qué se necesitaría para integrar otros espacios?</label>
+          <label>¿Qué se necesitaría para integrar otros espacios del Polo?</label>
           <textarea
-            placeholder="Recursos, acuerdos, adaptaciones…"
             value={data.integracion}
             onChange={(e) => set({ integracion: e.target.value })}
           />
@@ -531,7 +517,6 @@ function renderStepContent(stepKey, data, setData) {
         <>
           <label>Observaciones finales</label>
           <textarea
-            placeholder="Notas, cuidados, recomendaciones…"
             value={data.observaciones}
             onChange={(e) => set({ observaciones: e.target.value })}
           />
@@ -540,26 +525,16 @@ function renderStepContent(stepKey, data, setData) {
   }
 }
 
-// ------------------------
-// Cards view (inline) – no necesita archivo extra
-// ------------------------
-function TalleresView({ theme, onOpen }) {
+// -----------------------------
+// Cards view (bootstrap-like)
+// -----------------------------
+function TalleresCards({ onEdit, onViewPdf }) {
   const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  const refresh = async () => {
-    setLoading(true);
-    try {
-      const list = await listTalleresFS();
-      setItems(list);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    refresh();
+    const unsub = subscribeTalleresFS(setItems);
+    return () => unsub?.();
   }, []);
 
   const filtered = useMemo(() => {
@@ -577,84 +552,117 @@ function TalleresView({ theme, onOpen }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Buscar por nombre, responsable o ejes…"
-          style={{
-            flex: "1 1 260px",
-            padding: "12px 14px",
-            borderRadius: 14,
-            border: `1px solid ${theme.line}`,
-            fontSize: 16,
-            outline: "none",
-          }}
-        />
-        <button
-          onClick={refresh}
-          style={{
-            padding: "12px 14px",
-            borderRadius: 14,
-            border: `1px solid ${theme.line}`,
-            background: "#fff",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Actualizar
-        </button>
-      </div>
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Buscar por nombre, responsable o ejes…"
+        style={{
+          padding: "12px 14px",
+          borderRadius: 14,
+          border: `1px solid ${COLORS.line}`,
+          fontSize: 16,
+          outline: "none",
+        }}
+      />
 
-      {loading ? (
-        <div style={{ opacity: 0.75, fontWeight: 800 }}>Cargando talleres…</div>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: 12,
-          }}
-        >
-          {filtered.map((t) => (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))",
+          gap: 14,
+        }}
+      >
+        {filtered.map((t) => (
+          <div
+            key={t.id}
+            style={{
+              borderRadius: 18,
+              border: `1px solid ${COLORS.line}`,
+              background: "#fff",
+              boxShadow: "0 10px 30px rgba(17,17,17,0.06)",
+              overflow: "hidden",
+            }}
+          >
             <div
-              key={t.id}
               style={{
-                borderRadius: 18,
-                border: `1px solid ${theme.line}`,
-                background: "#fff",
                 padding: 14,
-                boxShadow: "0 10px 30px rgba(17,17,17,0.06)",
-                display: "grid",
-                gap: 8,
+                display: "flex",
+                gap: 12,
+                alignItems: "center",
+                borderBottom: `1px solid ${COLORS.line}`,
+                background: "rgba(31,163,91,0.06)",
               }}
             >
-              <div style={{ fontWeight: 950, fontSize: 16 }}>
-                {t.nombre || "Sin nombre"}
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 16,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "#fff",
+                  border: `1px solid ${COLORS.line}`,
+                  fontSize: 24,
+                  flex: "0 0 auto",
+                }}
+                title="Taller"
+              >
+                🧩
               </div>
 
-              <div style={{ opacity: 0.78, fontSize: 13 }}>
-                ⏱️ {fmt(t.operativa?.duracion)} · 👥 {fmt(t.operativa?.cupo)}
-              </div>
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontWeight: 950,
+                    fontSize: 16,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {t.nombre || "Sin nombre"}
+                </div>
 
+                <div style={{ opacity: 0.75, fontSize: 13, marginTop: 2 }}>
+                  ⏱️ {fmt(t.operativa?.duracion)} · 👥 {fmt(t.operativa?.cupo)}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: 14, display: "grid", gap: 10 }}>
               <div style={{ opacity: 0.78, fontSize: 13 }}>
                 🤝 {fmt(t.responsables)}
               </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
-                  onClick={() => onOpen?.(t)}
+                  onClick={() => onViewPdf(t)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 14,
+                    border: `1px solid ${COLORS.line}`,
+                    background: "#fff",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Ver PDF
+                </button>
+
+                <button
+                  onClick={() => onEdit(t)}
                   style={{
                     padding: "10px 12px",
                     borderRadius: 14,
                     border: "1px solid transparent",
-                    background: theme.green,
+                    background: COLORS.green,
                     color: "#fff",
                     fontWeight: 900,
                     cursor: "pointer",
                   }}
                 >
-                  Abrir
+                  Editar
                 </button>
 
                 <button
@@ -662,26 +670,26 @@ function TalleresView({ theme, onOpen }) {
                     const ok = confirm("¿Eliminar este taller? No se puede deshacer.");
                     if (!ok) return;
                     await deleteTallerFS(t.id);
-                    await refresh();
                   }}
                   style={{
                     padding: "10px 12px",
                     borderRadius: 14,
-                    border: `1px solid ${theme.line}`,
+                    border: `1px solid ${COLORS.line}`,
                     background: "#fff",
                     fontWeight: 900,
                     cursor: "pointer",
+                    color: "#b30000",
                   }}
                 >
-                  Eliminar
+                  Borrar
                 </button>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
 
-      {!loading && !filtered.length && (
+      {!filtered.length && (
         <div style={{ opacity: 0.7, fontWeight: 800 }}>
           No hay talleres guardados todavía.
         </div>
@@ -690,43 +698,122 @@ function TalleresView({ theme, onOpen }) {
   );
 }
 
+// -----------------------------
+// PDF Modal viewer
+// -----------------------------
+function PdfModal({ open, url, title, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(17,17,17,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        zIndex: 9999,
+      }}
+    >
+      <div
+        style={{
+          width: "min(980px, 95vw)",
+          height: "min(92vh, 900px)",
+          background: "#fff",
+          borderRadius: 18,
+          overflow: "hidden",
+          boxShadow: "0 30px 90px rgba(0,0,0,0.25)",
+          border: `1px solid ${COLORS.line}`,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            padding: 12,
+            borderBottom: `1px solid ${COLORS.line}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <div style={{ fontWeight: 950, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {title || "Vista previa PDF"}
+          </div>
+
+          <button
+            onClick={onClose}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 14,
+              border: `1px solid ${COLORS.line}`,
+              background: "#fff",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Cerrar
+          </button>
+        </div>
+
+        <iframe
+          title="pdf"
+          src={url}
+          style={{ width: "100%", height: "100%", border: 0 }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(initial);
 
-  // vista
   const [view, setView] = useState("form"); // "form" | "list"
-
-  // firestore id del documento actual
   const [currentId, setCurrentId] = useState(null);
 
-  // estados UI
   const [saving, setSaving] = useState(false);
 
-  // cargar local (solo para no perder datos en refresh)
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setData((d) => ({ ...d, ...JSON.parse(saved) }));
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch {}
-  }, [data]);
+  // PDF viewer state
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfTitle, setPdfTitle] = useState("");
 
   const current = STEPS[step];
-  const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
-  const back = () => setStep((s) => Math.max(s - 1, 0));
   const dots = useMemo(() => STEPS.map((_, i) => ({ active: i === step, done: i < step })), [step]);
 
-  const resetNuevo = () => {
+  const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  const back = () => setStep((s) => Math.max(s - 1, 0));
+
+  const canSave = safe(data.nombre).length > 0;
+
+  const newTaller = () => {
     setData(initial);
     setCurrentId(null);
     setStep(0);
     setView("form");
+  };
+
+  const openPdfPreview = (tallerData) => {
+    // libera url anterior
+    setPdfUrl("");
+    const url = pdfBlobUrl(tallerData);
+    setPdfTitle(safe(tallerData.nombre) ? `PDF — ${tallerData.nombre}` : "PDF — Taller");
+    setPdfUrl(url);
+    setPdfOpen(true);
   };
 
   const styles = `
@@ -735,8 +822,6 @@ export default function App() {
       --ink:${COLORS.ink};
       --green:${COLORS.green};
       --blue:${COLORS.blue};
-      --pink:${COLORS.pink};
-      --mustard:${COLORS.mustard};
       --line:${COLORS.line};
       --white:${COLORS.white};
     }
@@ -744,13 +829,13 @@ export default function App() {
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
     .wrap{min-height:100vh;display:flex;flex-direction:column;}
     .top{padding:22px 16px 8px;display:flex;justify-content:center;}
-    .topInner{width:100%;max-width:940px;display:flex;align-items:center;justify-content:center;}
+    .topInner{width:100%;max-width:980px;display:flex;align-items:center;justify-content:center;}
     .brand{width:100%;display:flex;justify-content:center;text-align:center;}
     .brand h1{margin:0;font-size:28px;letter-spacing:0.2px;font-weight:900;line-height:1.1;}
     .brand h1 span{color:var(--green)}
     .main{flex:1;display:flex;justify-content:center;align-items:flex-start;padding:14px 16px 28px;}
     .card{
-      width:100%;max-width:940px;background:var(--white);
+      width:100%;max-width:980px;background:var(--white);
       border:1px solid var(--line);border-radius:22px;
       box-shadow:0 20px 60px rgba(17,17,17,0.10);overflow:hidden;
     }
@@ -762,7 +847,7 @@ export default function App() {
       font-size:18px;font-weight:900;color:var(--green);
     }
     .stepTitle h2{margin:0;font-size:22px;font-weight:950;letter-spacing:-0.2px}
-    .stepMeta{margin:2px 0 0;font-size:14px;font-weight:700;color:rgba(17,17,17,0.6)}
+    .stepMeta{margin:2px 0 0;font-size:14px;font-weight:800;color:rgba(17,17,17,0.6)}
     .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .btn{
       border:1px solid transparent;border-radius:14px;padding:12px 14px;
@@ -771,7 +856,6 @@ export default function App() {
     .btnPrimary{background:var(--ink);color:var(--white)}
     .btnSecondary{background:transparent;border-color:var(--line);color:var(--ink)}
     .btnGreen{background:var(--green);color:var(--white)}
-    .btnDanger{background:#fff;border-color:rgba(230,0,0,0.25);color:#b30000}
     .btn:disabled{opacity:0.55;cursor:not-allowed}
     .dots{padding:0 18px 10px;display:flex;gap:8px;flex-wrap:wrap}
     .content{padding:8px 18px 18px;}
@@ -811,13 +895,10 @@ export default function App() {
     }
   `;
 
-  const canSave = safe(data.nombre).length > 0;
-
   return (
     <div className="wrap">
       <style>{styles}</style>
 
-      {/* SOLO TÍTULO */}
       <header className="top">
         <div className="topInner">
           <div className="brand">
@@ -828,19 +909,14 @@ export default function App() {
         </div>
       </header>
 
-      {/* CONTENIDO */}
       <main className="main">
         <section className="card">
           <div className="cardHead">
             <div className="stepTitle">
-              <div className="iconBubble">{current.icon}</div>
+              <div className="iconBubble">{view === "form" ? current.icon : "📚"}</div>
               <div>
                 <div className="stepMeta">
-                  {view === "form" ? (
-                    <>Paso {step + 1} de {STEPS.length}</>
-                  ) : (
-                    <>Talleres guardados</>
-                  )}
+                  {view === "form" ? `Paso ${step + 1} de ${STEPS.length}` : "Talleres guardados"}
                 </div>
                 <h2>{view === "form" ? current.label : "Listado de talleres"}</h2>
               </div>
@@ -848,19 +924,15 @@ export default function App() {
 
             <div className="actions">
               <button className="btn btnSecondary" onClick={() => setView("form")}>
-                Formulario
+                Editar / Crear
               </button>
 
               <button className="btn btnSecondary" onClick={() => setView("list")}>
                 Talleres
               </button>
 
-              <button
-                className="btn btnSecondary"
-                onClick={resetNuevo}
-                title="Crear un taller nuevo (limpia el formulario)"
-              >
-                Nuevo
+              <button className="btn btnSecondary" onClick={newTaller} title="Crear un taller nuevo">
+                Nuevo taller
               </button>
 
               <button
@@ -888,12 +960,11 @@ export default function App() {
                     setSaving(false);
                   }
                 }}
-                title="Guardar en Firestore"
               >
                 {saving ? "Guardando…" : currentId ? "Guardar cambios" : "Guardar taller"}
               </button>
 
-              <button className="btn btnGreen" onClick={() => exportPDF(data)}>
+              <button className="btn btnGreen" onClick={() => downloadPdf(data)}>
                 Exportar PDF
               </button>
             </div>
@@ -901,7 +972,7 @@ export default function App() {
 
           <div className="infoBar">
             <span className="tag">
-              {currentId ? `ID: ${currentId}` : "Sin guardar en la base"}
+              {currentId ? `Editando guardado (ID: ${currentId})` : "Creando nuevo (sin guardar en la base)"}
             </span>
             {!canSave && <span className="tag">Falta: nombre del taller</span>}
           </div>
@@ -928,7 +999,7 @@ export default function App() {
                     Siguiente
                   </button>
                 ) : (
-                  <button className="btn btnPrimary" onClick={() => exportPDF(data)}>
+                  <button className="btn btnPrimary" onClick={() => downloadPdf(data)}>
                     Finalizar y exportar
                   </button>
                 )}
@@ -936,10 +1007,12 @@ export default function App() {
             </>
           ) : (
             <div className="content">
-              <TalleresView
-                theme={{ line: COLORS.line, green: COLORS.green }}
-                onOpen={(t) => {
-                  // IMPORTANT: Firestore doc viene con id; lo guardamos aparte
+              <TalleresCards
+                onViewPdf={(t) => {
+                  const { id, createdAt, updatedAt, ...rest } = t;
+                  openPdfPreview(rest);
+                }}
+                onEdit={(t) => {
                   const { id, createdAt, updatedAt, ...rest } = t;
                   setData((d) => ({ ...d, ...rest }));
                   setCurrentId(id);
@@ -951,6 +1024,13 @@ export default function App() {
           )}
         </section>
       </main>
+
+      <PdfModal
+        open={pdfOpen}
+        url={pdfUrl}
+        title={pdfTitle}
+        onClose={() => setPdfOpen(false)}
+      />
     </div>
   );
 }
